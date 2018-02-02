@@ -4,9 +4,7 @@
     "target": "esnext",
     "strict": true,
     "noUnusedLocals": true,
-    "noEmitHelpers": true,
     "noFallthroughCasesInSwitch": true,
-    "preserveConstEnums": true,
     "outDir": "./dist"
   },
   "include": [

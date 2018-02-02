@@ -46,25 +46,67 @@ describe('parseParams function', () => {
 describe('buildRequest function', () => {
     it('should use the target param as URL', () => {
         const p = new HttpProbe({})
-        const r = buildRequest(p, 'http://example.com')
-        expect(r.url).to.equal('http://example.com')
+        const [r, err] = buildRequest(p, 'http://example.com')
+        expect(err).to.equal(null)
+        expect(r).to.not.equal(null)
+        expect(r!.url).to.equal('http://example.com')
+    })
+    it('should return error if target param is not an URL', () => {
+        const p = new HttpProbe({})
+        const [r, err] = buildRequest(p, 'example.com')
+        expect(r).to.equal(null)
+        expect(err).to.not.equal(null)
+        expect(err!.message).to.contain('target must start with either http:// or https://')
     })
     it('should use default value for class property', () => {
         const p = new HttpProbe({})
-        const r = buildRequest(p, 'http://example.com')
-        expect(r.method).to.equal('GET')
+        const [r, err] = buildRequest(p, 'http://example.com')
+        expect(err).to.equal(null)
+        expect(r).to.not.equal(null)
+        expect(r!.method).to.equal('GET')
     })
     it('should set the header specified in config', () => {
         const p = new HttpProbe({headers: {'foo': 'bar'}})
-        const r = buildRequest(p, 'http://example.com')
-        expect(r.url).to.equal('http://example.com')
-        expect(r.headers.get('foo')).to.equal('bar')
+        const [r, err] = buildRequest(p, 'http://example.com')
+        expect(err).to.equal(null)
+        expect(r).to.not.equal(null)
+        expect(r!.url).to.equal('http://example.com')
+        expect(r!.headers.get('foo')).to.equal('bar')
     })
     it('should set the body specified in config', () => {
         const p = new HttpProbe({method: 'POST', body: 'foo'})
-        const r = buildRequest(p, 'http://example.com')
-        expect(r.url).to.equal('http://example.com')
-        return expect(r.text()).to.eventually.equal('foo')
+        const [r, err] = buildRequest(p, 'http://example.com')
+        expect(err).to.equal(null)
+        expect(r).to.not.equal(null)
+        expect(r!.url).to.equal('http://example.com')
+        return expect(r!.text()).to.eventually.equal('foo')
+    })
+    it('should return error if body is set for GET request', () => {
+        const p = new HttpProbe({method: 'GET', body: 'foo'})
+        const [r, err] = buildRequest(p, 'http://example.com')
+        expect(err).to.not.equal(null)
+        expect(r).to.equal(null)
+        expect(err!.message).to.contain('body is not allowed')
+    })
+    it('should return error if target is not allowed', () => {
+        const p = new HttpProbe({method: 'GET', allowed_targets: ['foo']})
+        const [r, err] = buildRequest(p, 'http://example.com')
+        expect(err).to.not.equal(null)
+        expect(r).to.equal(null)
+        expect(err!.message).to.contain('target is not allowed in probe config')
+    })
+    it('should also use regexp for checking allowed targets', () => {
+        const p = new HttpProbe({method: 'GET', allowed_targets: [/https:\/\/.+/]})
+        const [r, err] = buildRequest(p, 'https://example.com')
+        expect(err).to.equal(null)
+        expect(r).to.not.equal(null)
+    })
+    it('should return error if target is not allowed with regexp', () => {
+        const p = new HttpProbe({method: 'GET', allowed_targets: [/https:\/\/.+/]})
+        const [r, err] = buildRequest(p, 'http://example.com')
+        expect(err).to.not.equal(null)
+        expect(r).to.equal(null)
+        expect(err!.message).to.contain('target is not allowed in probe config')
     })
 })
 
@@ -135,7 +177,6 @@ describe('buildResponse function', () => {
             probe_success: true
         }
         const r = buildResponse(pr)
-        expect(r.body).to.not.equal(null)
         return expect(r.text()).to.eventually.contain('probe_success 1')
     })
     it('should return 0 for failed probe', () => {
@@ -143,7 +184,17 @@ describe('buildResponse function', () => {
             probe_success: false
         }
         const r = buildResponse(pr)
-        expect(r.body).to.not.equal(null)
         return expect(r.text()).to.eventually.contain('probe_success 0')
+    })
+    it('should return all metrics in response', () => {
+        const pr: ProbeResult = {
+            probe_success: true
+        }
+        const r = buildResponse(pr)
+        return expect(r.text()).to.eventually.contain('probe_success')
+            .and.contain('probe_duration_seconds')
+            .and.contain('probe_http_status_code ')
+            .and.contain('probe_http_redirected')
+            .and.contain('probe_http_content_length')
     })
 })

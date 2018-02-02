@@ -1,6 +1,8 @@
 .PHONY: compile
 compile:
 	tsc
+	# dirty workaround to remove all export declaration in complied JS
+	sed -i '.original' 's/^export //' dist/*.js
 
 .PHONY: test
 test:
@@ -8,7 +10,7 @@ test:
 
 .PHONY: deploy
 deploy: clean test compile
-	echo 'push'
+	# TODO
 
 clean:
 	rm -rf dist/*

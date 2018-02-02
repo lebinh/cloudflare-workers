@@ -1,3 +1,6 @@
+/**
+ * Blackbox Exporter HTTP Probe using Cloudflare Worker.
+ */
 
 /**
  * Sample modules configuration.
@@ -5,7 +8,6 @@
  * This is based on blackbox-exporter's http_probe configuration,
  * see @HttpProbeConfig interface below for supported options.
  */
-
 const modules: { [name: string]: HttpProbeConfig } = {
     http_get_2xx: {
         method: 'GET',
@@ -13,6 +15,7 @@ const modules: { [name: string]: HttpProbeConfig } = {
     },
     http_post_204: {
         method: 'POST',
+        allowed_targets: ['https://example.com'],
         headers: {
             'Content-Type': 'application/json'
         },
@@ -27,6 +30,7 @@ const modules: { [name: string]: HttpProbeConfig } = {
  */
 if (typeof addEventListener === 'function') {
     addEventListener('fetch', (e: Event): void => {
+        // work around as strict typescript check doesn't allow e to be of type FetchEvent
         const fe = e as FetchEvent
         fe.respondWith(processRequest(fe.request))
     });
@@ -34,16 +38,16 @@ if (typeof addEventListener === 'function') {
 
 function processRequest(r: Request): Response | Promise<Response> {
     if (r.method !== 'GET') {
-        return new Response('Sorry, this only accept GET method', {status: 400})
+        return errorResponse('sorry, this only accept GET method')
     }
 
     const [params, err] = parseParams(r)
     if (params === null) {
         // err must be non-null if params is null
-        return new Response(`error: ${err!.message}`, {status: 400})
+        return errorResponse(err!)
     }
     if (!modules.hasOwnProperty(params.module)) {
-        return new Response(`Unknown module: ${params.module}`, {status: 400})
+        return errorResponse(`unknown module: ${params.module}`)
     }
 
     const module = modules[params.module]
@@ -51,9 +55,23 @@ function processRequest(r: Request): Response | Promise<Response> {
 }
 
 /**
- * Parse request params for module and target.
+ * Create an error Response.
  *
- * @param r the Request to parse
+ * @param {string | Error} err the error instance or message to show in Response
+ * @param {number} status HTTP status code to use in Response
+ * @returns {Response} a Response for given error and status
+ */
+function errorResponse(err: string | Error, status: number = 400): Response {
+    const msg = (err instanceof Error) ? err.message : err
+    return new Response(`error: ${msg}`, {status: status})
+}
+
+/**
+ * Parse request params for module and target.
+ * Return an Error if either 'module' or 'target' param is missing.
+ *
+ * @param {Request} r the request to parse
+ * @return {[RequestParam , null] | [null , Error]}
  */
 export function parseParams(r: Request): [RequestParam, null] | [null, Error] {
     const url = new URL(r.url)
@@ -72,16 +90,19 @@ export function parseParams(r: Request): [RequestParam, null] | [null, Error] {
 
 async function doProbe(config: HttpProbeConfig, target: string): Promise<Response> {
     const probe = new HttpProbe(config)
-    const req = buildRequest(probe, target)
+    const [req, err] = buildRequest(probe, target)
+    if (err !== null) {
+        return errorResponse(err)
+    }
 
     // performance.now() is not available in CF workers
     const before = Date.now();
-    const resp = await fetch(req);
+    const resp = await fetch(req!);
     const after = Date.now();
 
     const success = await validateResponse(probe, resp);
     const contentLength = parseInt(resp.headers.get('content-length') || '-1');
-    const probeResult: ProbeResult = {
+    const probeResult = {
         probe_success: success,
         probe_duration_seconds: (after - before) / 1000,
         probe_http_status_code: resp.status,
@@ -91,7 +112,27 @@ async function doProbe(config: HttpProbeConfig, target: string): Promise<Respons
     return buildResponse(probeResult);
 }
 
-export function buildRequest(probe: HttpProbe, target: string): Request {
+/**
+ * Build a probing request to send for given probe config and target.
+ *
+ * @param {HttpProbe} probe
+ * @param {string} target
+ * @return {[Request , null] | [null , Error]}
+ */
+export function buildRequest(probe: HttpProbe, target: string): [Request, null] | [null, Error] {
+    if (probe.body !== '' && (probe.method === 'GET' || probe.method === 'HEAD')) {
+        return [null, new Error('body is not allowed for GET or HEAD request')]
+    }
+    const normTarget = target.toLowerCase()
+    if (!normTarget.startsWith('http://') && !normTarget.startsWith('https://')) {
+        return [null, new Error('target must start with either http:// or https://: ' + normTarget)]
+    }
+    if (probe.allowedTargets.length > 0) {
+        if (!probe.allowedTargets.some(isEqualOrMatched(normTarget))) {
+            return [null, new Error('target is not allowed in probe config: ' + normTarget)]
+        }
+    }
+
     const options: RequestInit = {
         method: probe.method,
         redirect: probe.noFollowRedirects ? 'manual' : 'follow'
@@ -102,9 +143,16 @@ export function buildRequest(probe: HttpProbe, target: string): Request {
     if (probe.body !== '') {
         options.body = probe.body
     }
-    return new Request(target, options);
+    return [new Request(normTarget, options), null];
 }
 
+/**
+ * Validate received response based on given probe config.
+ *
+ * @param {HttpProbe} probe
+ * @param {Response} resp
+ * @return {Promise<boolean>}
+ */
 export async function validateResponse(probe: HttpProbe, resp: Response): Promise<boolean> {
     const validStatus = validateResponseStatus(resp.status, probe.validStatusCodes)
     if (!validStatus) {
@@ -164,6 +212,12 @@ function validateResponseBody(text: string, probe: HttpProbe): boolean {
     return true
 }
 
+/**
+ * Build output response in Prometheus exposition format.
+ *
+ * @param {ProbeResult} r
+ * @return {Response}
+ */
 export function buildResponse(r: ProbeResult): Response {
     const output = `probe_success ${r.probe_success ? 1 : 0}
 probe_duration_seconds ${r.probe_duration_seconds}
@@ -172,6 +226,12 @@ probe_http_redirected ${r.probe_http_redirected ? 1 : 0}
 probe_http_content_length ${r.probe_http_content_length}
     `
     return new Response(output)
+}
+
+function isEqualOrMatched(s: string) {
+    return function (test: string | RegExp, index: number, array: Array<string | RegExp>): boolean {
+        return test instanceof RegExp ? test.test(s) : test === s
+    }
 }
 
 /**
@@ -194,6 +254,9 @@ export interface HttpProbeConfig {
     // Whether or not the probe will follow any redirects. Default: false
     readonly no_follow_redirects?: boolean
 
+    // Only allow probing of targets in this list. Default is empty, which means allow any target.
+    readonly allowed_targets?: Array<string | RegExp>
+
     //
     // Response validation
     //
@@ -213,6 +276,7 @@ export class HttpProbe {
     readonly headers: { [name: string]: string }
     readonly body: string
     readonly noFollowRedirects: boolean
+    readonly allowedTargets: Array<string | RegExp>
     readonly validStatusCodes: Array<number> | HttpStatusCodeClass
     readonly failIfMatchesRegexp: Array<RegExp>
     readonly failIfNotMatchesRegexp: Array<RegExp>
@@ -222,6 +286,7 @@ export class HttpProbe {
         this.headers = config.headers || {}
         this.body = config.body || ''
         this.noFollowRedirects = config.no_follow_redirects || false
+        this.allowedTargets = config.allowed_targets || []
         this.validStatusCodes = config.valid_status_codes || HttpStatusCodeClass.Http_2xx
         this.failIfMatchesRegexp = config.fail_if_matches_regexp || []
         this.failIfNotMatchesRegexp = config.fail_if_not_matches_regexp || []
@@ -253,5 +318,6 @@ export interface ProbeResult {
 
 declare interface FetchEvent extends Event {
     request: Request;
+
     respondWith(r: Promise<Response> | Response): Promise<Response>;
 }
