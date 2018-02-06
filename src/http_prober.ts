@@ -33,7 +33,7 @@ if (typeof addEventListener === 'function') {
         // work around as strict typescript check doesn't allow e to be of type FetchEvent
         const fe = e as FetchEvent
         fe.respondWith(processRequest(fe.request))
-    });
+    })
 }
 
 function processRequest(r: Request): Response | Promise<Response> {
@@ -63,7 +63,7 @@ function processRequest(r: Request): Response | Promise<Response> {
  */
 function errorResponse(err: string | Error, status: number = 400): Response {
     const msg = (err instanceof Error) ? err.message : err
-    return new Response(`error: ${msg}`, {status: status})
+    return new Response(`error: ${msg}\n`, {status: status})
 }
 
 /**
@@ -84,7 +84,7 @@ export function parseParams(r: Request): [RequestParam, null] | [null, Error] {
     const result = {
         module: url.searchParams.get('module') || '',
         target: url.searchParams.get('target') || ''
-    };
+    }
     return [result, null]
 }
 
@@ -96,20 +96,24 @@ async function doProbe(config: HttpProbeConfig, target: string): Promise<Respons
     }
 
     // performance.now() is not available in CF workers
-    const before = Date.now();
-    const resp = await fetch(req!);
-    const after = Date.now();
+    const before = Date.now()
+    const resp = await fetch(req!)
+    // Read the full response's body first to measure the total response time.
+    // We assume body to be text as we only care about text in (optional) validation step later,
+    // but other content type shouldn't affect this measurement.
+    const body = await resp.text()
+    const after = Date.now()
 
-    const success = await validateResponse(probe, resp);
-    const contentLength = parseInt(resp.headers.get('content-length') || '-1');
+    const success = await validateResponse(probe, resp, body)
+    const contentLength = parseInt(resp.headers.get('content-length') || '-1')
     const probeResult = {
         probe_success: success,
         probe_duration_seconds: (after - before) / 1000,
         probe_http_status_code: resp.status,
         probe_http_redirected: resp.redirected,
         probe_http_content_length: contentLength,
-    };
-    return buildResponse(probeResult);
+    }
+    return buildResponse(probeResult)
 }
 
 /**
@@ -143,7 +147,7 @@ export function buildRequest(probe: HttpProbe, target: string): [Request, null] 
     if (probe.body !== '') {
         options.body = probe.body
     }
-    return [new Request(normTarget, options), null];
+    return [new Request(normTarget, options), null]
 }
 
 /**
@@ -151,16 +155,20 @@ export function buildRequest(probe: HttpProbe, target: string): [Request, null] 
  *
  * @param {HttpProbe} probe
  * @param {Response} resp
+ * @param {string | null} body optional body text in case it is already read from the response,
+ *        otherwise will be read from response as `resp.text()`
  * @return {Promise<boolean>}
  */
-export async function validateResponse(probe: HttpProbe, resp: Response): Promise<boolean> {
+export async function validateResponse(probe: HttpProbe, resp: Response, body: string | null = null): Promise<boolean> {
     const validStatus = validateResponseStatus(resp.status, probe.validStatusCodes)
     if (!validStatus) {
         return false
     }
 
-    const bodyText = await resp.text()
-    return validateResponseBody(bodyText, probe);
+    if (body === null) {
+        body = await resp.text()
+    }
+    return validateResponseBody(body, probe)
 }
 
 function validateResponseStatus(status: number, validStatus: Array<number> | HttpStatusCodeClass): boolean {
@@ -195,7 +203,7 @@ function validateResponseStatus(status: number, validStatus: Array<number> | Htt
                 return false
             }
     }
-    return true;
+    return true
 }
 
 function validateResponseBody(text: string, probe: HttpProbe): boolean {
@@ -317,7 +325,7 @@ export interface ProbeResult {
 }
 
 declare interface FetchEvent extends Event {
-    request: Request;
+    request: Request
 
-    respondWith(r: Promise<Response> | Response): Promise<Response>;
+    respondWith(r: Promise<Response> | Response): Promise<Response>
 }
