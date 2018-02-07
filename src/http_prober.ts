@@ -63,7 +63,7 @@ function processRequest(r: Request): Response | Promise<Response> {
  */
 function errorResponse(err: string | Error, status: number = 400): Response {
     const msg = (err instanceof Error) ? err.message : err
-    return new Response(`error: ${msg}\n`, {status: status})
+    return new Response(`error: ${msg}\n`, {status: status, statusText: 'Bad Request'})
 }
 
 /**

@@ -57,7 +57,7 @@ function processRequest(r) {
  */
 function errorResponse(err, status = 400) {
     const msg = (err instanceof Error) ? err.message : err;
-    return new Response(`error: ${msg}\n`, { status: status });
+    return new Response(`error: ${msg}\n`, { status: status, statusText: 'Bad Request' });
 }
 /**
  * Parse request params for module and target.
