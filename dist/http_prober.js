@@ -10,7 +10,6 @@
 const modules = {
     http_get_2xx: {
         method: 'GET',
-        fail_if_not_matches_regexp: [/ok/]
     },
     http_post_204: {
         method: 'POST',
