@@ -45,7 +45,7 @@ function processRequest(r) {
         return errorResponse(`unknown module: ${params.module}`);
     }
     const module = modules[params.module];
-    return doProbe(module, params.target);
+    return doProbe(r, module, params.target);
 }
 /**
  * Create an error Response.
@@ -65,7 +65,7 @@ function errorResponse(err, status = 400) {
  * @param {Request} r the request to parse
  * @return {[RequestParam , null] | [null , Error]}
  */
-function parseParams(r) {
+export function parseParams(r) {
     const url = new URL(r.url);
     if (!url.searchParams.has('module')) {
         return [null, new Error('module parameter is missing')];
@@ -79,7 +79,7 @@ function parseParams(r) {
     };
     return [result, null];
 }
-async function doProbe(config, target) {
+async function doProbe(request, config, target) {
     const probe = new HttpProbe(config);
     const [req, err] = buildRequest(probe, target);
     if (err !== null) {
@@ -95,12 +95,15 @@ async function doProbe(config, target) {
     const after = Date.now();
     const success = await validateResponse(probe, resp, body);
     const contentLength = parseInt(resp.headers.get('content-length') || '-1');
+    const rayId = parseRayId(resp.headers.get('cf-ray') || 'unknown');
     const probeResult = {
         probe_success: success,
         probe_duration_seconds: (after - before) / 1000,
         probe_http_status_code: resp.status,
         probe_http_redirected: resp.redirected,
         probe_http_content_length: contentLength,
+        client_country: request.headers.get('cf-ipcountry') || 'unknown',
+        cf_pop: rayId.popId,
     };
     return buildResponse(probeResult);
 }
@@ -111,7 +114,7 @@ async function doProbe(config, target) {
  * @param {string} target
  * @return {[Request , null] | [null , Error]}
  */
-function buildRequest(probe, target) {
+export function buildRequest(probe, target) {
     if (probe.body !== '' && (probe.method === 'GET' || probe.method === 'HEAD')) {
         return [null, new Error('body is not allowed for GET or HEAD request')];
     }
@@ -145,7 +148,7 @@ function buildRequest(probe, target) {
  *        otherwise will be read from response as `resp.text()`
  * @return {Promise<boolean>}
  */
-async function validateResponse(probe, resp, body = null) {
+export async function validateResponse(probe, resp, body = null) {
     const validStatus = validateResponseStatus(resp.status, probe.validStatusCodes);
     if (!validStatus) {
         return false;
@@ -202,18 +205,26 @@ function validateResponseBody(text, probe) {
     }
     return true;
 }
+export function parseRayId(rayId) {
+    const splitAt = rayId.indexOf('-');
+    if (splitAt < 0) {
+        return { rayId: rayId, popId: 'unknown' };
+    }
+    return { rayId: rayId.substr(0, splitAt), popId: rayId.substr(splitAt + 1) };
+}
 /**
  * Build output response in Prometheus exposition format.
  *
  * @param {ProbeResult} r
  * @return {Response}
  */
-function buildResponse(r) {
-    const output = `probe_success ${r.probe_success ? 1 : 0}
-probe_duration_seconds ${r.probe_duration_seconds}
-probe_http_status_code ${r.probe_http_status_code}
-probe_http_redirected ${r.probe_http_redirected ? 1 : 0}
-probe_http_content_length ${r.probe_http_content_length}
+export function buildResponse(r) {
+    const labels = `{pop="${r.cf_pop}", client_ip_country="${r.client_country}"}`;
+    const output = `probe_success${labels} ${r.probe_success ? 1 : 0}
+probe_duration_seconds${labels} ${r.probe_duration_seconds}
+probe_http_status_code${labels} ${r.probe_http_status_code}
+probe_http_redirected${labels} ${r.probe_http_redirected ? 1 : 0}
+probe_http_content_length${labels} ${r.probe_http_content_length}
     `;
     return new Response(output);
 }
@@ -222,7 +233,7 @@ function isEqualOrMatched(s) {
         return test instanceof RegExp ? test.test(s) : test === s;
     };
 }
-class HttpProbe {
+export class HttpProbe {
     constructor(config) {
         this.method = config.method || 'GET';
         this.headers = config.headers || {};

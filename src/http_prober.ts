@@ -50,7 +50,7 @@ function processRequest(r: Request): Response | Promise<Response> {
     }
 
     const module = modules[params.module]
-    return doProbe(module, params.target)
+    return doProbe(r, module, params.target)
 }
 
 /**
@@ -87,7 +87,7 @@ export function parseParams(r: Request): [RequestParam, null] | [null, Error] {
     return [result, null]
 }
 
-async function doProbe(config: HttpProbeConfig, target: string): Promise<Response> {
+async function doProbe(request: Request, config: HttpProbeConfig, target: string): Promise<Response> {
     const probe = new HttpProbe(config)
     const [req, err] = buildRequest(probe, target)
     if (err !== null) {
@@ -105,12 +105,15 @@ async function doProbe(config: HttpProbeConfig, target: string): Promise<Respons
 
     const success = await validateResponse(probe, resp, body)
     const contentLength = parseInt(resp.headers.get('content-length') || '-1')
+    const rayId = parseRayId(resp.headers.get('cf-ray') || 'unknown')
     const probeResult = {
         probe_success: success,
         probe_duration_seconds: (after - before) / 1000,
         probe_http_status_code: resp.status,
         probe_http_redirected: resp.redirected,
         probe_http_content_length: contentLength,
+        client_country: request.headers.get('cf-ipcountry') || 'unknown',
+        cf_pop: rayId.popId,
     }
     return buildResponse(probeResult)
 }
@@ -219,6 +222,14 @@ function validateResponseBody(text: string, probe: HttpProbe): boolean {
     return true
 }
 
+export function parseRayId(rayId: string): RayId {
+    const splitAt = rayId.indexOf('-')
+    if (splitAt < 0) {
+        return {rayId: rayId, popId: 'unknown'}
+    }
+    return {rayId: rayId.substr(0, splitAt), popId: rayId.substr(splitAt + 1)}
+}
+
 /**
  * Build output response in Prometheus exposition format.
  *
@@ -226,11 +237,12 @@ function validateResponseBody(text: string, probe: HttpProbe): boolean {
  * @return {Response}
  */
 export function buildResponse(r: ProbeResult): Response {
-    const output = `probe_success ${r.probe_success ? 1 : 0}
-probe_duration_seconds ${r.probe_duration_seconds}
-probe_http_status_code ${r.probe_http_status_code}
-probe_http_redirected ${r.probe_http_redirected ? 1 : 0}
-probe_http_content_length ${r.probe_http_content_length}
+    const labels = `{pop="${r.cf_pop}", client_ip_country="${r.client_country}"}`
+    const output = `probe_success${labels} ${r.probe_success ? 1 : 0}
+probe_duration_seconds${labels} ${r.probe_duration_seconds}
+probe_http_status_code${labels} ${r.probe_http_status_code}
+probe_http_redirected${labels} ${r.probe_http_redirected ? 1 : 0}
+probe_http_content_length${labels} ${r.probe_http_content_length}
     `
     return new Response(output)
 }
@@ -317,10 +329,17 @@ export interface RequestParam {
 
 export interface ProbeResult {
     probe_success: boolean
-    probe_duration_seconds?: number
-    probe_http_status_code?: number
-    probe_http_redirected?: boolean
-    probe_http_content_length?: number
+    probe_duration_seconds: number
+    probe_http_status_code: number
+    probe_http_redirected: boolean
+    probe_http_content_length: number
+    cf_pop: string
+    client_country: string
+}
+
+export interface RayId {
+    rayId: string
+    popId: string
 }
 
 declare interface FetchEvent extends Event {

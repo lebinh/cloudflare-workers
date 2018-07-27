@@ -9,6 +9,7 @@ import {
     HttpProbe,
     HttpStatusCodeClass,
     parseParams,
+    parseRayId,
     ProbeResult,
     validateResponse,
 } from '../src/http_prober';
@@ -172,29 +173,50 @@ describe('validateResponse function', () => {
 })
 
 describe('buildResponse function', () => {
-    it('should return 1 for successful probe', () => {
-        const pr: ProbeResult = {
-            probe_success: true
+    function createProbeResult(success: boolean = true): ProbeResult {
+        return {
+            cf_pop: 'unknown',
+            client_country: 'unknown',
+            probe_success: success,
+            probe_duration_seconds: 1,
+            probe_http_status_code: 200,
+            probe_http_redirected: false,
+            probe_http_content_length: 0,
         }
-        const r = buildResponse(pr)
-        return expect(r.text()).to.eventually.contain('probe_success 1')
+    }
+
+    it('should return 1 for successful probe', () => {
+        const r = buildResponse(createProbeResult())
+        return expect(r.text()).to.eventually.match(/probe_success.* 1/)
     })
     it('should return 0 for failed probe', () => {
-        const pr: ProbeResult = {
-            probe_success: false
-        }
-        const r = buildResponse(pr)
-        return expect(r.text()).to.eventually.contain('probe_success 0')
+        const r = buildResponse(createProbeResult(false))
+        return expect(r.text()).to.eventually.match(/probe_success.* 0/)
     })
     it('should return all metrics in response', () => {
-        const pr: ProbeResult = {
-            probe_success: true
-        }
-        const r = buildResponse(pr)
+        const r = buildResponse(createProbeResult())
         return expect(r.text()).to.eventually.contain('probe_success')
             .and.contain('probe_duration_seconds')
-            .and.contain('probe_http_status_code ')
+            .and.contain('probe_http_status_code')
             .and.contain('probe_http_redirected')
             .and.contain('probe_http_content_length')
+    })
+})
+
+describe('parseRayId function', () => {
+    it('should return the pop id and ray id from rayId-popId input', () => {
+        const r = parseRayId('foo-bar')
+        expect(r.rayId).to.equal('foo')
+        expect(r.popId).to.equal('bar')
+    })
+    it('should only split on the first dash', () => {
+        const r = parseRayId('foo-bar-blah')
+        expect(r.rayId).to.equal('foo')
+        expect(r.popId).to.equal('bar-blah')
+    })
+    it('should return the whole thing as ray id if there is no dash', () => {
+        const r = parseRayId('foobar')
+        expect(r.rayId).to.equal('foobar')
+        expect(r.popId).to.equal('unknown')
     })
 })

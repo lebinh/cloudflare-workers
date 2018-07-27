@@ -24,6 +24,19 @@ ifndef CF_AUTH_KEY
 endif
 	@$(foreach s,$(basenames),$(call upload,$(s)))
 
+.PHONY: deploy-one
+deploy-one:
+ifndef CF_AUTH_EMAIL
+	$(error CF_AUTH_EMAIL is not set)
+endif
+ifndef CF_AUTH_KEY
+	$(error CF_AUTH_KEY is not set)
+endif
+ifndef WORKER
+	$(error WORKER is not set)
+endif
+	@$(call upload,$(WORKER))
+
 clean:
 	rm -rf dist/*
 
